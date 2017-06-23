@@ -1,4 +1,4 @@
-#!/Users/dland/virtualenv/errbot/bin/python
+#!/usr/bin/env python
 import pykube
 import operator
 from os.path import expanduser, exists
@@ -36,6 +36,7 @@ if os.path.exists(proxyconfig):
         print("Excluding mappings for local services:")
         for i in local_services:
             print(i)
+        print("")
 
 
 def chkcom(command):
@@ -46,8 +47,6 @@ def chkcom(command):
                 return(output.exit_code)
             else:
                 return("# ERROR: cannot find command %s and brew isn't installed, aborting")
-        else:
-            return("# INFO: Found %s" % command)
     elif command == "ghost":
         if not sh.which('ghost'):
             output = sh.sudo("gem", "install", command)
@@ -72,6 +71,10 @@ def findif(iface):
         except:
             return("# ERROR: Failed to add lo0 alias!")
 
+def launch():
+    print("Launching haproxy")
+    sh.sudo("haproxy", "-f", haproxy_config, _fg=True)
+
 
 # exclude list should live in proxyconfig:
 # do NOT proxy things living in local part of proxy config
@@ -93,9 +96,11 @@ def findif(iface):
 # don't forget:
 # object.__dict
 
-def up():
+api = pykube.HTTPClient(pykube.KubeConfig.from_file(kubeconfig))
+
+def config():
+    print("(Re)configuring haproxy configuration and host entries..")
     # services = pykube.Service.objects(api).filter(field_selector={"metadata.name":"homefit"})
-    api = pykube.HTTPClient(pykube.KubeConfig.from_file(kubeconfig))
     services = pykube.Service.objects(api)
     service_list = {}
     for service in services:
@@ -130,7 +135,7 @@ def up():
 
     config = """global
        log 127.0.0.1 local2
-       # daemon
+       daemon
        maxconn 256
 
     defaults
@@ -155,7 +160,7 @@ def up():
             localif = "127.15.0.%s" % (str(curip))
             if findif(localif):
                 print(findif(localif))
-            print("### creating mapping for service: %s" % service)
+            # print("### creating mapping for service: %s" % service)
             # print(service_list[service]['ports'].keys())
             for pname in service_list[service]['ports'].keys():
                 if service_list[service]['ports'][pname]:
@@ -180,7 +185,7 @@ def up():
                 for i in pods:
                     # print(service_list[service]['ports'][pname])
                     pod = i.obj
-                    config += "    server %s %s:%s\n" % (str(pod['status']['podIP']), str(pod['status']['podIP']), str(service_list[service]['ports'][pname]['targetPort']))
+                    config += "        server %s %s:%s\n" % (str(pod['status']['podIP']), str(pod['status']['podIP']), str(service_list[service]['ports'][pname]['targetPort']))
                 #     # print(pod['spec']['ports'])
                 #     for port in service_list[service]['ports']:
                 #         print("     %s:%s" % (pod['status']['podIP'], port))
@@ -191,21 +196,39 @@ def up():
     target.write(config)
     target.close()
 
-    print("Launching haproxy")
-    sh.sudo("haproxy", "-f", haproxy_config, _fg=True)
+def up():
+    config()
+    launch()
 
-def down():
-    print("Cleaning up")
-    sh.sudo("ghost", "empty")
+def kill():
+    print("Attempting to kill haproxy..")
     try:
         sh.sudo("killall", "haproxy")
     except:
         pass
+
+def down():
+    print("Cleaning up")
+    sh.sudo("ghost", "empty")
+    kill()
     sh.rm(haproxy_config)
 
 if __name__ == '__main__':
     try:
         up()
+        seen = []
+        watch = pykube.Pod.objects(api).watch()
+        for watch_event in watch:
+            if not re.search(re.escape("wolfnet-importer"), str(watch_event[1])):
+                if str(watch_event[1]) not in seen:
+                    if str(watch_event[0]) != 'ADDED': # 'ADDED', 'DELETED', 'MODIFIED'
+                        # print(watch_event)
+                        print("Event triggered from: %s" % (str(watch_event[1])))
+                        config()
+                        kill()
+                        launch()
+                        seen.append(str(watch_event[1]))
+
     except KeyboardInterrupt:
         down()
         sys.exit()
