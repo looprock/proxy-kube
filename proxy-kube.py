@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import pykube
 import operator
 from os.path import expanduser, exists
