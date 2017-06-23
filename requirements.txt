@@ -1,5 +1,3 @@
-import pykube
-import operator
-import sh
-import getpass
-import configparser
+pykube
+sh
+configparser
