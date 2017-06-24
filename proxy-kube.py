@@ -33,11 +33,19 @@ if os.path.exists(proxyconfig):
         if 'local' in config['default']:
             for i in config.get('default', 'local').split(','):
                 local_services.append(i.strip())
+        if 'context' in config['default']:
+            kube_context = config.get('default', 'context')
+        else:
+            kube_context = "beta"
         print("Excluding mappings for local services:")
         for i in local_services:
             print(i)
         print("")
 
+print("Context set to: %s" % (kube_context))
+config = pykube.KubeConfig.from_file(kubeconfig)
+config.set_current_context(kube_context)
+api = pykube.HTTPClient(config)
 
 def chkcom(command):
     if command == "haproxy":
@@ -96,9 +104,7 @@ def launch():
 # don't forget:
 # object.__dict
 
-api = pykube.HTTPClient(pykube.KubeConfig.from_file(kubeconfig))
-
-def config():
+def config(start=False):
     print("(Re)configuring haproxy configuration and host entries..")
     # services = pykube.Service.objects(api).filter(field_selector={"metadata.name":"homefit"})
     services = pykube.Service.objects(api)
@@ -160,7 +166,8 @@ def config():
             localif = "127.15.0.%s" % (str(curip))
             if findif(localif):
                 print(findif(localif))
-            # print("### creating mapping for service: %s" % service)
+            if start:
+                print("### creating mapping for service: %s" % service)
             # print(service_list[service]['ports'].keys())
             for pname in service_list[service]['ports'].keys():
                 if service_list[service]['ports'][pname]:
@@ -197,7 +204,7 @@ def config():
     target.close()
 
 def up():
-    config()
+    config(start=True)
     launch()
 
 def kill():
