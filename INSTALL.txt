@@ -2,4 +2,11 @@ make sure you have:
 ~/.kube/config
 
 brew install python3
-pip3 install -r requirements.txt
+virtualenv -p python3 ~/virtualenv/proxy-kube
+source ~/virtualenv/proxy-kube/bin/activate
+pip install -r requirements.txt
+./proxy-kube.py
+
+NOTE: you'll need to run:
+source ~/virtualenv/proxy-kube/bin/activate 
+prior to executing this script from now on unless you do other things, like add that to your .bashrc or something..
