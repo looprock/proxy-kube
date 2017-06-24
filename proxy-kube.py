@@ -163,7 +163,7 @@ def config(start=False):
     curip = 1
     for service in service_list.keys():
         if service not in local_services:
-            localif = "127.15.0.%s" % (str(curip))
+            localif = "172.16.0.%s" % (str(curip))
             if findif(localif):
                 print(findif(localif))
             if start:
