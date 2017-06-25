@@ -10,6 +10,16 @@ import os
 import getpass
 import yaml
 
+# https://github.com/kelproject/pykube
+# set up watches to notice changes
+
+# use ghost to manage /etc/hosts:
+# https://superuser.com/questions/381138/mac-os-x-hosts-file-can-i-include-other-files-with-it
+
+# support multiple namespaces
+# create kube External service definitions
+# remove localif interface aliases in cleanup
+
 domain = "default.svc.beta.local"
 localif_prefix = "172.214.0"
 
@@ -62,27 +72,6 @@ def findif(iface):
 def launch():
     print("Launching haproxy")
     sh.sudo("haproxy", "-f", haproxy_config, _fg=True)
-
-
-# exclude list should live in proxyconfig:
-# do NOT proxy things living in local part of proxy config
-
-# exclude services via flag
-
-# https://github.com/kelproject/pykube
-# set up watches to notice changes
-
-# sudo ifconfig lo0 alias 127.0.0.2
-# create haproxy entry for each service mapped to localhost IP and backend port
-# use ghost to manage /etc/hosts:
-# https://superuser.com/questions/381138/mac-os-x-hosts-file-can-i-include-other-files-with-it
-
-# need both start and stop commands:
-# start: create config, add hosts w/ ghost, start haproxy
-# stop: stop haproxy, remove ghost entries
-
-# don't forget:
-# object.__dict
 
 def build_config(start=False):
     config = """global
