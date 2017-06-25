@@ -1,0 +1,10 @@
+---
+minikube:
+  exclude:
+  - foo-srv
+  - bar-srv
+beta:
+  watch: true
+  exclude:
+  - rabbitmq
+  - postgresql

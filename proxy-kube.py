@@ -8,11 +8,10 @@ import re
 import sys
 import os
 import getpass
-import configparser
-
-
+import yaml
 
 domain = "default.svc.beta.local"
+localif_prefix = "172.214.0"
 
 home = expanduser("~")
 kubeconfig = "%s/.kube/config" % home
@@ -21,31 +20,15 @@ proxydir = "%s/.proxy-kube" % home
 if not os.path.exists(proxydir):
     os.mkdir(proxydir)
 
-proxyconfig = "%s/config" % proxydir
+proxyconfig = "%s/config.yaml" % proxydir
 haproxy_config = "%s/haproxy.conf" % proxydir
 
-local_services = []
-
 if os.path.exists(proxyconfig):
-    config = configparser.ConfigParser()
-    config.read(proxyconfig)
-    if 'default' in config:
-        if 'local' in config['default']:
-            for i in config.get('default', 'local').split(','):
-                local_services.append(i.strip())
-        if 'context' in config['default']:
-            kube_context = config.get('default', 'context')
-        else:
-            kube_context = "beta"
-        print("Excluding mappings for local services:")
-        for i in local_services:
-            print(i)
-        print("")
-
-print("Context set to: %s" % (kube_context))
-config = pykube.KubeConfig.from_file(kubeconfig)
-config.set_current_context(kube_context)
-api = pykube.HTTPClient(config)
+    with open(proxyconfig, 'r') as stream:
+        try:
+            pconfig=yaml.load(stream)
+        except yaml.YAMLError as exc:
+            print(exc)
 
 def chkcom(command):
     if command == "haproxy":
@@ -65,9 +48,6 @@ if chkcom("haproxy"):
 
 if chkcom("ghost"):
     print(chkcom("ghost"))
-# print(chkcom("bar"))
-
-
 
 ifaces = sh.ifconfig("lo0")
 
@@ -104,107 +84,97 @@ def launch():
 # don't forget:
 # object.__dict
 
-def config(start=False):
-    print("(Re)configuring haproxy configuration and host entries..")
-    # services = pykube.Service.objects(api).filter(field_selector={"metadata.name":"homefit"})
-    services = pykube.Service.objects(api)
-    service_list = {}
-    for service in services:
-        port_list = []
-        # print(service)
-        sobj = service.obj
-        spec = sobj['spec']
-        # print(spec)
-        if 'selector' in spec.keys():
-            tmpdict = {}
-            # print(spec['selector'])
-            # print(spec['ports'])
-            for port in spec['ports']:
-                # {'name': 'http', 'protocol': 'TCP', 'port': 80, 'targetPort': 80}
-                # {'protocol': 'TCP', 'port': 5432, 'targetPort': 5432}
-
-                if str(port['targetPort']).isdigit():
-                    if 'name' in port:
-                        name = port['name']
-                    else:
-                        name = 'default'
-                    tmpdict[name] = {}
-                    tmpdict[name]['protocol'] = port['protocol']
-                    tmpdict[name]['port'] = port['port']
-                    tmpdict[name]['targetPort'] = port['targetPort']
-            if tmpdict:
-                service_list[str(service)] = {}
-                service_list[str(service)]['ports'] = tmpdict
-                service_list[str(service)]['selectors'] = spec['selector']
-
-    # print(json.dumps(service_list, indent=4))
-
+def build_config(start=False):
     config = """global
-       log 127.0.0.1 local2
-       daemon
-       maxconn 256
+   log 127.0.0.1 local2
+   daemon
+   maxconn 256
 
-    defaults
-       log global
-       timeout connect  5000
-       timeout client  10000
-       timeout server  10000
+defaults
+   log global
+   timeout connect  5000
+   timeout client  10000
+   timeout server  10000
 
-    listen stats
-       bind :1936
-       mode http
-       stats enable
-       stats hide-version
-       stats realm Haproxy\ Statistics
-       stats uri /
-       stats auth admin:admin
-    \n
-    """
-    curip = 1
-    for service in service_list.keys():
-        if service not in local_services:
-            localif = "172.16.0.%s" % (str(curip))
-            if findif(localif):
-                print(findif(localif))
-            if start:
-                print("### creating mapping for service: %s" % service)
-            # print(service_list[service]['ports'].keys())
-            for pname in service_list[service]['ports'].keys():
-                if service_list[service]['ports'][pname]:
-                    # 10.1.5.16	elasticsearch-0.es-cluster.default.svc.cluster.local	elasticsearch-0
-                    output = sh.sudo("ghost", "add", service, localif)
-                    # if output.exit_code
-                    # print("Service: %s" % service)
-                    # print("pname: %s" % pname)
-                    # print("curip: %s" % str(curip))
-                    # print("port: %s" % service_list[service]['ports'][pname]['port'])
-                    config += """
-    frontend %s-%s
-        bind %s:%s
-        mode tcp
-        default_backend %s-%s
+listen stats
+   bind :1936
+   mode http
+   stats enable
+   stats hide-version
+   stats realm Haproxy\ Statistics
+   stats uri /
+   stats auth admin:admin
+\n
+"""
+    print("(Re)configuring haproxy configuration and host entries..")
+    all_services = []
+    for kube_context in pconfig.keys():
+        print("Context set to: %s" % (kube_context))
+        pykube_config = pykube.KubeConfig.from_file(kubeconfig)
+        pykube_config.set_current_context(kube_context)
+        api = pykube.HTTPClient(pykube_config)
+        services = pykube.Service.objects(api)
+        service_list = {}
+        for service in services:
+            if str(service) in all_services:
+                print("ERROR: found service %s in multiple contexts! Please use excludes to isolate all but one!" % service)
+                sys.exit(1)
+            port_list = []
+            sobj = service.obj
+            spec = sobj['spec']
+            if 'selector' in spec.keys():
+                tmpdict = {}
+                for port in spec['ports']:
+                    # {'name': 'http', 'protocol': 'TCP', 'port': 80, 'targetPort': 80}
+                    # {'protocol': 'TCP', 'port': 5432, 'targetPort': 5432}
+                    if str(port['targetPort']).isdigit():
+                        if 'name' in port:
+                            name = port['name']
+                        else:
+                            name = 'default'
+                        tmpdict[name] = {}
+                        tmpdict[name]['protocol'] = port['protocol']
+                        tmpdict[name]['port'] = port['port']
+                        tmpdict[name]['targetPort'] = port['targetPort']
+                if tmpdict:
+                    service_list[str(service)] = {}
+                    service_list[str(service)]['ports'] = tmpdict
+                    service_list[str(service)]['selectors'] = spec['selector']
+        curip = 1
+        for service in service_list.keys():
+            if service not in pconfig[kube_context]['exclude']:
+                all_services.append(str(service))
+                localif = "%s.%s" % (localif_prefix, str(curip))
+                if findif(localif):
+                    print(findif(localif))
+                if start:
+                    print("### creating mapping for service: %s" % service)
+                for pname in service_list[service]['ports'].keys():
+                    if service_list[service]['ports'][pname]:
+                        # 10.1.5.16	elasticsearch-0.es-cluster.default.svc.cluster.local	elasticsearch-0
+                        output = sh.sudo("ghost", "add", service, localif)
+                        config += """
+frontend %s-%s
+    bind %s:%s
+    mode tcp
+    default_backend %s-%s
 
-    backend %s-%s
-        mode tcp
-        balance roundrobin\n""" % (service, pname, localif, str(service_list[service]['ports'][pname]['port']), service, pname, service, pname)
-            # print(service)
-                pods = pykube.Pod.objects(api).filter(selector=service_list[service]['selectors'])
-                for i in pods:
-                    # print(service_list[service]['ports'][pname])
-                    pod = i.obj
-                    config += "        server %s %s:%s\n" % (str(pod['status']['podIP']), str(pod['status']['podIP']), str(service_list[service]['ports'][pname]['targetPort']))
-                #     # print(pod['spec']['ports'])
-                #     for port in service_list[service]['ports']:
-                #         print("     %s:%s" % (pod['status']['podIP'], port))
-                config += "\n"
-                curip = curip + 1
+backend %s-%s
+    mode tcp
+    balance roundrobin\n""" % (service, pname, localif, str(service_list[service]['ports'][pname]['port']), service, pname, service, pname)
+                    pods = pykube.Pod.objects(api).filter(selector=service_list[service]['selectors'])
+                    for i in pods:
+                        pod = i.obj
+                        config += "    server %s %s:%s\n" % (str(pod['status']['podIP']), str(pod['status']['podIP']), str(service_list[service]['ports'][pname]['targetPort']))
+                    config += "\n"
+                    curip = curip + 1
 
-    target = open(haproxy_config, 'w')
-    target.write(config)
-    target.close()
+        target = open(haproxy_config, 'w')
+        target.write(config)
+        target.close()
 
 def up():
-    config(start=True)
+    build_config(start=True)
     launch()
 
 def kill():
@@ -224,14 +194,29 @@ if __name__ == '__main__':
     try:
         up()
         seen = []
+        watch_context = None
+        if len(pconfig.keys()) > 1:
+            for test_context in pconfig.keys():
+                if 'watch' in pconfig[test_context]:
+                    if pconfig[test_context]['watch']:
+                        watch_context = test_context
+                        print("Found watch specified for context %s" % test_context)
+            if not watch_context:
+                print("Multiple contexts found in config, but watch not specified. Please specify 'watch: true' for one of them.")
+                sys.exit(1)
+        else:
+            watch_context = list(pconfig.keys())[0]
+        print("Context set to: %s" % (watch_context))
+        watch_config = pykube.KubeConfig.from_file(kubeconfig)
+        watch_config.set_current_context(watch_context)
+        api = pykube.HTTPClient(watch_config)
         watch = pykube.Pod.objects(api).watch()
         for watch_event in watch:
             if not re.search(re.escape("wolfnet-importer"), str(watch_event[1])):
                 if str(watch_event[1]) not in seen:
                     if str(watch_event[0]) != 'ADDED': # 'ADDED', 'DELETED', 'MODIFIED'
-                        # print(watch_event)
                         print("Event triggered from: %s" % (str(watch_event[1])))
-                        config()
+                        build_config()
                         kill()
                         launch()
                         seen.append(str(watch_event[1]))

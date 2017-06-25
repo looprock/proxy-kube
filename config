@@ -1,4 +1,0 @@
-# copy this to ~/.proxy-kube/config
-[default]
-local = service-you-don_t-want-to-map, test-svc
-context = minikube
