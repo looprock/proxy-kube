@@ -13,7 +13,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("-c", "--context", help="specify context")
 parser.add_argument("-e", "--exclude", help="specify exclude")
-parser.add_argument("-n", "--namespaces", help="specify namespaces")
+parser.add_argument("-n", "--namespace", help="specify namespace")
 args = parser.parse_args()
 if args.context:
     pconfig = {}
@@ -21,10 +21,12 @@ if args.context:
     if args.exclude:
         pconfig[args.context] = {}
         pconfig[args.context]['exclude'] = args.exclude.split(",")
+    if args.namespace:
+        pconfig[args.context] = {}
+        pconfig[args.context]['namespace'] = 'default'
 
     print("Using CLI overrides, trying to build out config...")
     print("context: %s" % args.context)
-    print(pconfig)
 else:
     pconfig = None
 
@@ -59,7 +61,15 @@ if not pconfig:
                 pconfig=yaml.load(stream)
             except yaml.YAMLError as exc:
                 print(exc)
-    print(pconfig)
+
+# normalize config data
+for kube_context in pconfig.keys():
+    # print(list(pconfig[kube_context].keys()))
+    if 'namespace' not in list(pconfig[kube_context].keys()):
+        print("Setting namespace to default...")
+        pconfig[kube_context]['namespace'] = 'default'
+    if 'exclude' not in list(pconfig[kube_context].keys()):
+        pconfig[kube_context]['exclude'] = []
 
 def chkcom(command):
     if command == "haproxy":
@@ -119,14 +129,11 @@ listen stats
     print("(Re)configuring haproxy configuration and host entries..")
     all_services = []
     for kube_context in pconfig.keys():
-        if not pconfig[kube_context]:
-            pconfig[kube_context] = {}
-            pconfig[kube_context]['exclude'] = []
-        print("Context set to: %s" % (kube_context))
+        print("Configuring context: %s" % (kube_context))
         pykube_config = pykube.KubeConfig.from_file(kubeconfig)
         pykube_config.set_current_context(kube_context)
         api = pykube.HTTPClient(pykube_config)
-        services = pykube.Service.objects(api)
+        services = pykube.Service.objects(api).filter(namespace=pconfig[kube_context]['namespace'])
         service_list = {}
         for service in services:
             if str(service) in all_services:
@@ -160,9 +167,9 @@ listen stats
                 localif = "%s.%s" % (localif_prefix, str(curip))
                 if findif(localif):
                     print(findif(localif))
-                if start:
-                    print("### creating mapping for service: %s" % service)
                 for pname in service_list[service]['ports'].keys():
+                    if start:
+                        print("### creating mapping for service: %s:%s" % (service, str(service_list[service]['ports'][pname]['port'])))
                     if service_list[service]['ports'][pname]:
                         # 10.1.5.16	elasticsearch-0.es-cluster.default.svc.cluster.local	elasticsearch-0
                         output = sh.sudo("ghost", "add", service, localif)
@@ -175,7 +182,7 @@ frontend %s-%s
 backend %s-%s
     mode tcp
     balance roundrobin\n""" % (service, pname, localif, str(service_list[service]['ports'][pname]['port']), service, pname, service, pname)
-                    pods = pykube.Pod.objects(api).filter(selector=service_list[service]['selectors'])
+                    pods = pykube.Pod.objects(api).filter(namespace=pconfig[kube_context]['namespace'], selector=service_list[service]['selectors'])
                     for i in pods:
                         pod = i.obj
                         config += "    server %s %s:%s\n" % (str(pod['status']['podIP']), str(pod['status']['podIP']), str(service_list[service]['ports'][pname]['targetPort']))
@@ -223,7 +230,7 @@ if __name__ == '__main__':
         watch_config = pykube.KubeConfig.from_file(kubeconfig)
         watch_config.set_current_context(watch_context)
         api = pykube.HTTPClient(watch_config)
-        watch = pykube.Pod.objects(api).watch()
+        watch = pykube.Pod.objects(api).filter(namespace=pconfig[watch_context]['namespace']).watch()
         for watch_event in watch:
             if not re.search(re.escape("wolfnet-importer"), str(watch_event[1])):
                 if str(watch_event[1]) not in seen:
