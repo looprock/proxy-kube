@@ -15,20 +15,16 @@ parser.add_argument("-c", "--context", help="specify context")
 parser.add_argument("-e", "--exclude", help="specify exclude")
 parser.add_argument("-n", "--namespace", help="specify namespace")
 args = parser.parse_args()
+pconfig = {}
 if args.context:
-    pconfig = {}
-    pconfig[args.context] = None
+    pconfig[args.context] = {}
     if args.exclude:
-        pconfig[args.context] = {}
         pconfig[args.context]['exclude'] = args.exclude.split(",")
     if args.namespace:
-        pconfig[args.context] = {}
         pconfig[args.context]['namespace'] = 'default'
 
     print("Using CLI overrides, trying to build out config...")
     print("context: %s" % args.context)
-else:
-    pconfig = None
 
 # https://github.com/kelproject/pykube
 # set up watches to notice changes
@@ -61,6 +57,12 @@ if not pconfig:
                 pconfig=yaml.load(stream)
             except yaml.YAMLError as exc:
                 print(exc)
+
+if not pconfig:
+    print("ERROR: you must provide a context, either in %s or via command line!" % proxyconfig)
+    sys.exit(1)
+
+# print(pconfig)
 
 # normalize config data
 for kube_context in pconfig.keys():
