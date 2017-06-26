@@ -7,8 +7,26 @@ import sh
 import re
 import sys
 import os
-import getpass
 import yaml
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-c", "--context", help="specify context")
+parser.add_argument("-e", "--exclude", help="specify exclude")
+parser.add_argument("-n", "--namespaces", help="specify namespaces")
+args = parser.parse_args()
+if args.context:
+    pconfig = {}
+    pconfig[args.context] = None
+    if args.exclude:
+        pconfig[args.context] = {}
+        pconfig[args.context]['exclude'] = args.exclude.split(",")
+
+    print("Using CLI overrides, trying to build out config...")
+    print("context: %s" % args.context)
+    print(pconfig)
+else:
+    pconfig = None
 
 # https://github.com/kelproject/pykube
 # set up watches to notice changes
@@ -19,6 +37,7 @@ import yaml
 # support multiple namespaces
 # create kube External service definitions
 # remove localif interface aliases in cleanup
+# single context CLI flags for context, excludes, namespaces
 
 domain = "default.svc.beta.local"
 localif_prefix = "172.214.0"
@@ -33,12 +52,14 @@ if not os.path.exists(proxydir):
 proxyconfig = "%s/config.yaml" % proxydir
 haproxy_config = "%s/haproxy.conf" % proxydir
 
-if os.path.exists(proxyconfig):
-    with open(proxyconfig, 'r') as stream:
-        try:
-            pconfig=yaml.load(stream)
-        except yaml.YAMLError as exc:
-            print(exc)
+if not pconfig:
+    if os.path.exists(proxyconfig):
+        with open(proxyconfig, 'r') as stream:
+            try:
+                pconfig=yaml.load(stream)
+            except yaml.YAMLError as exc:
+                print(exc)
+    print(pconfig)
 
 def chkcom(command):
     if command == "haproxy":
@@ -98,6 +119,9 @@ listen stats
     print("(Re)configuring haproxy configuration and host entries..")
     all_services = []
     for kube_context in pconfig.keys():
+        if not pconfig[kube_context]:
+            pconfig[kube_context] = {}
+            pconfig[kube_context]['exclude'] = []
         print("Context set to: %s" % (kube_context))
         pykube_config = pykube.KubeConfig.from_file(kubeconfig)
         pykube_config.set_current_context(kube_context)
