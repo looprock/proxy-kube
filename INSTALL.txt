@@ -14,7 +14,7 @@ proxy-kube.py currently has dependencies on ghost, haproxy, and python3. This do
 ### Packages
 ```
 brew install python3 haproxy
-gem install ghost
+sudo gem install ghost
 ```
 
 ### Python modules and environment
