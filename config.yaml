@@ -1,10 +1,14 @@
 ---
 minikube:
-  exclude:
-  - foo-srv
-  - bar-srv
+ # loadsvc only works if you copy minikube_services somewhere in your path
+ # if you do that and set this variable, proxy-kube will attempt to load service
+ # definions from other clusters into your minikube cluster
+ loadsvc: true
+ namespace: default
 beta:
-  watch: true
-  exclude:
-  - rabbitmq
-  - postgresql
+ # at least one context must be set to 'watch' if you have multiple contexts defined
+ watch: true
+ # you can exclude remove context services you want to run locally or in minikube here
+ exclude:
+ - rabbitmq
+ - postgresql

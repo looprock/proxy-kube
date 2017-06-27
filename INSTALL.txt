@@ -1,12 +1,30 @@
 make sure you have:
 ~/.kube/config
 
-brew install python3
+# Requirements
+
+## Set up sudo to support passwordless interaction
+
+There are several ways to do this. The easiest is to add/uncomment the line in /etc/sudoers:
+```%admin  ALL=(ALL) NOPASSWD: ALL```
+
+## Install dependencies
+proxy-kube.py currently has dependencies on ghost, haproxy, and python3. This document assumes you'll install packages via brew.
+
+### Packages
+```
+brew install python3 haproxy
+gem install ghost
+```
+
+### Python modules and environment
 virtualenv -p python3 ~/virtualenv/proxy-kube
 source ~/virtualenv/proxy-kube/bin/activate
 pip install -r requirements.txt
+
+# You should now be able to run
 ./proxy-kube.py
 
 NOTE: you'll need to run:
-source ~/virtualenv/proxy-kube/bin/activate 
+source ~/virtualenv/proxy-kube/bin/activate
 prior to executing this script from now on unless you do other things, like add that to your .bashrc or something..

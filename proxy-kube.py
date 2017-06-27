@@ -9,6 +9,7 @@ import sys
 import os
 import yaml
 import argparse
+import shutil
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-c", "--context", help="specify context")
@@ -35,17 +36,18 @@ if args.context:
 # support multiple namespaces
 # create kube External service definitions
 # remove localif interface aliases in cleanup
-# single context CLI flags for context, excludes, namespaces
 
-domain = "default.svc.beta.local"
+# domain = "default.svc.beta.local"
 localif_prefix = "172.214.0"
 
 home = expanduser("~")
 kubeconfig = "%s/.kube/config" % home
 proxydir = "%s/.proxy-kube" % home
-
+svctmp = "%s/svc" % proxydir
 if not os.path.exists(proxydir):
     os.mkdir(proxydir)
+if not os.path.exists(svctmp):
+    os.mkdir(svctmp)
 
 proxyconfig = "%s/config.yaml" % proxydir
 haproxy_config = "%s/haproxy.conf" % proxydir
@@ -72,6 +74,8 @@ for kube_context in pconfig.keys():
         pconfig[kube_context]['namespace'] = 'default'
     if 'exclude' not in list(pconfig[kube_context].keys()):
         pconfig[kube_context]['exclude'] = []
+
+# print(json.dumps(pconfig,indent=4))
 
 def chkcom(command):
     if command == "haproxy":
@@ -138,41 +142,60 @@ listen stats
         services = pykube.Service.objects(api).filter(namespace=pconfig[kube_context]['namespace'])
         service_list = {}
         for service in services:
-            if str(service) in all_services:
-                print("ERROR: found service %s in multiple contexts! Please use excludes to isolate all but one!" % service)
-                sys.exit(1)
-            port_list = []
-            sobj = service.obj
-            spec = sobj['spec']
-            if 'selector' in spec.keys():
-                tmpdict = {}
-                for port in spec['ports']:
-                    # {'name': 'http', 'protocol': 'TCP', 'port': 80, 'targetPort': 80}
-                    # {'protocol': 'TCP', 'port': 5432, 'targetPort': 5432}
-                    if str(port['targetPort']).isdigit():
-                        if 'name' in port:
-                            name = port['name']
-                        else:
-                            name = 'default'
-                        tmpdict[name] = {}
-                        tmpdict[name]['protocol'] = port['protocol']
-                        tmpdict[name]['port'] = port['port']
-                        tmpdict[name]['targetPort'] = port['targetPort']
-                if tmpdict:
-                    service_list[str(service)] = {}
-                    service_list[str(service)]['ports'] = tmpdict
-                    service_list[str(service)]['selectors'] = spec['selector']
-        curip = 1
+            # print(pconfig[kube_context]['exclude'])
+            if str(service) not in pconfig[kube_context]['exclude']:
+                if str(service) in all_services:
+                    print("ERROR: found service %s in multiple contexts! Please use excludes to isolate all but one!" % service)
+                    sys.exit(1)
+                port_list = []
+                sobj = service.obj
+                spec = sobj['spec']
+                if 'selector' in spec.keys():
+                    tmpdict = {}
+                    for port in spec['ports']:
+                        # {'name': 'http', 'protocol': 'TCP', 'port': 80, 'targetPort': 80}
+                        # {'protocol': 'TCP', 'port': 5432, 'targetPort': 5432}
+                        if str(port['targetPort']).isdigit():
+                            if 'name' in port:
+                                name = port['name']
+                            else:
+                                name = 'default'
+                            tmpdict[name] = {}
+                            tmpdict[name]['protocol'] = port['protocol']
+                            tmpdict[name]['port'] = port['port']
+                            tmpdict[name]['targetPort'] = port['targetPort']
+                    if tmpdict:
+                        service_list[str(service)] = {}
+                        service_list[str(service)]['ports'] = tmpdict
+                        service_list[str(service)]['selectors'] = spec['selector']
+
+        curip = 2
         for service in service_list.keys():
-            if service not in pconfig[kube_context]['exclude']:
+            if str(service) not in pconfig[kube_context]['exclude']:
                 all_services.append(str(service))
                 localif = "%s.%s" % (localif_prefix, str(curip))
                 if findif(localif):
                     print(findif(localif))
+                svctmpl = """apiVersion: v1
+kind: Service
+metadata:
+  creationTimestamp: null
+  name: %s
+  namespace: %s
+spec:
+  externalName: %s
+  sessionAffinity: None
+  type: ExternalName
+  ports:\n""" % (service, pconfig[kube_context]['namespace'], localif)
                 for pname in service_list[service]['ports'].keys():
                     if start:
                         print("### creating mapping for service: %s:%s" % (service, str(service_list[service]['ports'][pname]['port'])))
                     if service_list[service]['ports'][pname]:
+                        svctmpl += """  - name: %s
+    port: %s
+    protocol: TCP
+    targetPort: %s\n""" % (pname, str(service_list[service]['ports'][pname]['port']), str(service_list[service]['ports'][pname]['targetPort']))
+
                         # 10.1.5.16	elasticsearch-0.es-cluster.default.svc.cluster.local	elasticsearch-0
                         output = sh.sudo("ghost", "add", service, localif)
                         config += """
@@ -190,13 +213,19 @@ backend %s-%s
                         config += "    server %s %s:%s\n" % (str(pod['status']['podIP']), str(pod['status']['podIP']), str(service_list[service]['ports'][pname]['targetPort']))
                     config += "\n"
                     curip = curip + 1
-
+                if kube_context != "minikube":
+                    svcout = "%s/%s.yaml" % (svctmp, service)
+                    target = open(svcout, 'w')
+                    target.write(svctmpl)
+                    target.close()
         target = open(haproxy_config, 'w')
         target.write(config)
         target.close()
+        manage_minikube_svc('apply')
 
 def up():
     build_config(start=True)
+    manage_minikube_svc('apply')
     launch()
 
 def kill():
@@ -206,11 +235,42 @@ def kill():
     except:
         pass
 
+def rmaliases():
+    print("Removing interface aliases..")
+    x = sh.ifconfig("lo0")
+    for i in x.split("\n"):
+        print(i)
+        matchobj = re.match( r'^\W+inet\W+(' + re.escape(localif_prefix) + '\.\d+)\W+.*$', i)
+        if matchobj:
+            ip = matchobj.group(1)
+            print("Removing %s" % str(ip))
+            try:
+                output = sh.sudo("ifconfig", "lo0", "-alias", str(ip))
+                return(output.exit_code)
+            except:
+                return("# ERROR: Failed to remove lo0 alias %s!" % (str(ip)))
+
+def manage_minikube_svc(action):
+    if 'minikube' in list(pconfig.keys()):
+        if 'loadsvc' in list(pconfig['minikube'].keys()):
+            print("%s services in minikube..." % (action))
+            try:
+                output = sh.kubectl('config', 'use-context', 'minikube')
+                # print(output)
+                output = sh.minikube_services(action)
+                print(output)
+            except sh.ErrorReturnCode as e:
+                print("ERROR: minikube-services unable to %s services" % (action))
+                print(e.stderr)
+
 def down():
     print("Cleaning up")
     sh.sudo("ghost", "empty")
     kill()
     sh.rm(haproxy_config)
+    manage_minikube_svc('delete')
+    shutil.rmtree(svctmp)
+    # rmaliases()
 
 if __name__ == '__main__':
     try:

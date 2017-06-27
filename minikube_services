@@ -1,0 +1,14 @@
+#!/bin/sh
+if [ ! "$1" ]; then
+	echo "USAGE: $0 <apply, delete>"
+	exit 1
+fi
+cd ~/.proxy-kube/svc
+if [ "$1" == "apply" ]; then
+	for i in `ls *.yaml`; do kubectl apply -f  $i; done
+elif [ "$1" == "delete" ]; then
+	for i in `ls *.yaml`; do kubectl delete -f  $i; done
+else
+	echo "ERROR: Unknown command!"
+	exit 1
+fi
