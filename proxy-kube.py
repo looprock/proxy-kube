@@ -38,7 +38,7 @@ if args.context:
 # remove localif interface aliases in cleanup
 
 # domain = "default.svc.beta.local"
-localif_prefix = "172.214.0"
+localif_prefix = "10.214.0"
 
 home = expanduser("~")
 kubeconfig = "%s/.kube/config" % home
@@ -134,6 +134,7 @@ listen stats
 """
     print("(Re)configuring haproxy configuration and host entries..")
     all_services = []
+    curip = 2
     for kube_context in pconfig.keys():
         print("Configuring context: %s" % (kube_context))
         pykube_config = pykube.KubeConfig.from_file(kubeconfig)
@@ -161,6 +162,8 @@ listen stats
                             else:
                                 name = 'default'
                             tmpdict[name] = {}
+                            if str(kube_context) == "minikube":
+                                tmpdict[name]['nodePort'] = port['nodePort']
                             tmpdict[name]['protocol'] = port['protocol']
                             tmpdict[name]['port'] = port['port']
                             tmpdict[name]['targetPort'] = port['targetPort']
@@ -169,7 +172,6 @@ listen stats
                         service_list[str(service)]['ports'] = tmpdict
                         service_list[str(service)]['selectors'] = spec['selector']
 
-        curip = 2
         for service in service_list.keys():
             if str(service) not in pconfig[kube_context]['exclude']:
                 all_services.append(str(service))
@@ -210,7 +212,13 @@ backend %s-%s
                     pods = pykube.Pod.objects(api).filter(namespace=pconfig[kube_context]['namespace'], selector=service_list[service]['selectors'])
                     for i in pods:
                         pod = i.obj
-                        config += "    server %s %s:%s\n" % (str(pod['status']['podIP']), str(pod['status']['podIP']), str(service_list[service]['ports'][pname]['targetPort']))
+                        if kube_context == 'minikube':
+                            targetIP = str(pod['status']['hostIP'])
+                            targetPort = str(service_list[service]['ports'][pname]['nodePort'])
+                        else:
+                            targetIP = str(pod['status']['podIP'])
+                            targetPort = str(service_list[service]['ports'][pname]['targetPort'])
+                        config += "    server %s %s:%s\n" % (targetIP, targetIP, targetPort)
                     config += "\n"
                     curip = curip + 1
                 if kube_context != "minikube":
